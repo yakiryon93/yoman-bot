@@ -47,8 +47,8 @@ def parse_message(text):
     """
     text = text.strip()
 
-    # פורמט עברי: מ-X עד Y Z עובדים
-    he_pattern = r"מ[־\-]?(\d{1,2}(?::\d{2})?)\s+עד\s+(\d{1,2}(?::\d{2})?)\s+(\d+)"
+    # פורמט עברי: מ-X עד Y Z עובדים (עם או בלי "מ")
+    he_pattern = r"(?:מ[־\-]?)?(\d{1,2}(?::\d{2})?)\s+עד\s+(\d{1,2}(?::\d{2})?)\s+(\d+)"
     match = re.search(he_pattern, text)
     if match:
         return normalize_hour(match.group(1)), normalize_hour(match.group(2)), int(match.group(3))
