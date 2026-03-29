@@ -1,5 +1,7 @@
 import logging
 import re
+import os
+import json
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
@@ -7,9 +9,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # ===== הגדרות =====
-TELEGRAM_TOKEN = "8632792737:AAG3uiTT9CQRk9nq5cutsVGk5k3qceB_am4"
-SPREADSHEET_ID = "1Yq3U4miWIGG763O_jY2oen2GFlhYe_U_1S62JurER3Q"
-CREDENTIALS_FILE = "credentials.json"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8632792737:AAG3uiTT9CQRk9nq5cutsVGk5k3qceB_am4")
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1Yq3U4miWIGG763O_jY2oen2GFlhYe_U_1S62JurER3Q")
 
 DAYS_HE = {
     0: "שני", 1: "שלישי", 2: "רביעי",
@@ -20,7 +21,12 @@ logging.basicConfig(level=logging.INFO)
 
 def connect_sheet():
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+    if creds_json:
+        creds_info = json.loads(creds_json)
+        creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+    else:
+        creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
     client = gspread.authorize(creds)
     return client.open_by_key(SPREADSHEET_ID).sheet1
 
