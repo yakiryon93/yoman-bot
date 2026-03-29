@@ -30,16 +30,42 @@ def connect_sheet():
     client = gspread.authorize(creds)
     return client.open_by_key(SPREADSHEET_ID).sheet1
 
+def normalize_hour(h):
+    """ממיר מספר שעה לפורמט HH:MM"""
+    h = h.replace(":", "")
+    if len(h) <= 2:
+        return f"{int(h):02d}:00"
+    return f"{h[:2]}:{h[2:4]}"
+
 def parse_message(text):
     """
-    מקבל הודעה בפורמט: 06:00 14:00 4
-    מחזיר (שעת_התחלה, שעת_סיום, כמות_עובדים)
+    מבין פורמטים שונים:
+    - 06:00 14:00 4
+    - 6 14 4
+    - עבדו מ6 עד 14 4 עובדים
+    - מ7 עד 15 3 עובדים
     """
+    text = text.strip()
+
+    # פורמט עברי: מ-X עד Y Z עובדים
+    he_pattern = r"מ[־\-]?(\d{1,2}(?::\d{2})?)\s+עד\s+(\d{1,2}(?::\d{2})?)\s+(\d+)"
+    match = re.search(he_pattern, text)
+    if match:
+        return normalize_hour(match.group(1)), normalize_hour(match.group(2)), int(match.group(3))
+
+    # פורמט רגיל עם נקודותיים: 06:00 14:00 4
     pattern = r"(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})\s+(\d+)"
-    match = re.search(pattern, text.strip())
-    if not match:
-        return None
-    return match.group(1), match.group(2), int(match.group(3))
+    match = re.search(pattern, text)
+    if match:
+        return match.group(1), match.group(2), int(match.group(3))
+
+    # פורמט מספרים בלבד: 6 14 4
+    simple = r"^(\d{1,2})\s+(\d{1,2})\s+(\d+)$"
+    match = re.search(simple, text)
+    if match:
+        return normalize_hour(match.group(1)), normalize_hour(match.group(2)), int(match.group(3))
+
+    return None
 
 def calc_hours(start, end):
     fmt = "%H:%M"
