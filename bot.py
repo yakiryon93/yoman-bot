@@ -3,6 +3,7 @@ import re
 import os
 import json
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 import gspread
@@ -90,7 +91,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hours = calc_hours(start, end)
     total = hours * workers
 
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Jerusalem"))
     date_str = now.strftime("%d/%m/%Y")
     day_str = DAYS_HE[now.weekday()]
 
