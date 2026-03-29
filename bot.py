@@ -1,0 +1,84 @@
+import logging
+import re
+from datetime import datetime, timedelta
+from telegram import Update
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+import gspread
+from google.oauth2.service_account import Credentials
+
+# ===== הגדרות =====
+TELEGRAM_TOKEN = "8632792737:AAG3uiTT9CQRk9nq5cutsVGk5k3qceB_am4"
+SPREADSHEET_ID = "1Yq3U4miWIGG763O_jY2oen2GFlhYe_U_1S62JurER3Q"
+CREDENTIALS_FILE = "credentials.json"
+
+DAYS_HE = {
+    0: "שני", 1: "שלישי", 2: "רביעי",
+    3: "חמישי", 4: "שישי", 5: "שבת", 6: "ראשון"
+}
+
+logging.basicConfig(level=logging.INFO)
+
+def connect_sheet():
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
+    client = gspread.authorize(creds)
+    return client.open_by_key(SPREADSHEET_ID).sheet1
+
+def parse_message(text):
+    """
+    מקבל הודעה בפורמט: 06:00 14:00 4
+    מחזיר (שעת_התחלה, שעת_סיום, כמות_עובדים)
+    """
+    pattern = r"(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})\s+(\d+)"
+    match = re.search(pattern, text.strip())
+    if not match:
+        return None
+    return match.group(1), match.group(2), int(match.group(3))
+
+def calc_hours(start, end):
+    fmt = "%H:%M"
+    t1 = datetime.strptime(start, fmt)
+    t2 = datetime.strptime(end, fmt)
+    if t2 < t1:
+        t2 += timedelta(days=1)
+    diff = (t2 - t1).seconds / 3600
+    return diff
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    parsed = parse_message(text)
+
+    if not parsed:
+        await update.message.reply_text(
+            "❌ לא הבנתי. שלח בפורמט:\n06:00 14:00 4\n(שעת התחלה, שעת סיום, כמות עובדים)"
+        )
+        return
+
+    start, end, workers = parsed
+    hours = calc_hours(start, end)
+    total = hours * workers
+
+    now = datetime.now()
+    date_str = now.strftime("%d/%m/%Y")
+    day_str = DAYS_HE[now.weekday()]
+
+    sheet = connect_sheet()
+    sheet.append_row([date_str, day_str, start, end, workers, hours, total, ""])
+
+    await update.message.reply_text(
+        f"✅ נרשם בהצלחה!\n"
+        f"📅 תאריך: {date_str} ({day_str})\n"
+        f"🕐 שעות: {start} עד {end}\n"
+        f"👷 עובדים: {workers}\n"
+        f"⏱ שעות ביום: {hours:.1f}\n"
+        f"📊 סה\"כ שעות: {total:.1f}"
+    )
+
+def main():
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("✅ הבוט פועל! שלח הודעה בטלגרם.")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
