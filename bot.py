@@ -65,6 +65,14 @@ def parse_correction(text):
     if not re.search(r"תיקון|תקן|עדכון|עדכן", text):
         return None
 
+    # אין עובדים — מחק את השורה
+    if re.search(r"אין עובדים|לא עבדו|לא עובדים|אין עבודה", text):
+        date_str = parse_date(text)
+        if not date_str:
+            now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+            date_str = now.strftime("%d/%m/%Y")
+        return date_str, "DELETE", None, None
+
     date_str = parse_date(text)
     if not date_str:
         return None
@@ -139,6 +147,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not row_index:
             await update.message.reply_text(f"❌ לא מצאתי שורה עם תאריך {date_str}")
+            return
+
+        # מחיקת שורה
+        if start == "DELETE":
+            sheet.delete_rows(row_index)
+            await update.message.reply_text(f"🗑️ השורה של {date_str} נמחקה — לא נרשמה עבודה היום.")
             return
 
         # קרא את הערכים הקיימים
