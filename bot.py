@@ -248,7 +248,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     scheduler = AsyncIOScheduler(timezone=ZoneInfo("Asia/Jerusalem"))
-    scheduler.add_job(daily_auto_entry, "cron", hour=9, minute=0, args=[app.bot])
+    scheduler.add_job(daily_auto_entry, "cron", hour=9, minute=30, args=[app.bot])
     scheduler.start()
 
     print("✅ הבוט פועל!")
