@@ -19,6 +19,13 @@ DEFAULT_START = "06:00"
 DEFAULT_END = "14:00"
 DEFAULT_WORKERS = 4
 
+TEAMS = {
+    "שפפים":  "שפפים",
+    "מגרשי":  "מגרשי ספורט",
+    "מגרש":   "מגרשי ספורט",
+    "ספורט":  "מגרשי ספורט",
+}
+
 DAYS_HE = {
     0: "שני", 1: "שלישי", 2: "רביעי",
     3: "חמישי", 4: "שישי", 5: "שבת", 6: "ראשון"
@@ -26,7 +33,7 @@ DAYS_HE = {
 
 logging.basicConfig(level=logging.INFO)
 
-def connect_sheet():
+def get_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds_json = os.environ.get("GOOGLE_CREDENTIALS")
     if creds_json:
@@ -34,8 +41,22 @@ def connect_sheet():
         creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     else:
         creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
-    client = gspread.authorize(creds)
-    return client.open_by_key(SPREADSHEET_ID).sheet1
+    return gspread.authorize(creds)
+
+def connect_sheet(team_name="שפפים"):
+    client = get_client()
+    spreadsheet = client.open_by_key(SPREADSHEET_ID)
+    try:
+        return spreadsheet.worksheet(team_name)
+    except:
+        return spreadsheet.sheet1
+
+def detect_team(text):
+    """מזהה איזה צוות מוזכר בהודעה. ברירת מחדל: שפפים"""
+    for keyword, name in TEAMS.items():
+        if keyword in text:
+            return name
+    return "שפפים"
 
 def normalize_hour(h):
     h = h.replace(":", "")
@@ -44,7 +65,6 @@ def normalize_hour(h):
     return f"{h[:2]}:{h[2:4]}"
 
 def parse_date(text):
-    """מנסה לחלץ תאריך מהטקסט בפורמט DD.M או DD/M או DD.MM.YYYY"""
     match = re.search(r"(\d{1,2})[./](\d{1,2})(?:[./](\d{4}))?", text)
     if match:
         day = int(match.group(1))
@@ -54,13 +74,6 @@ def parse_date(text):
     return None
 
 def parse_correction(text):
-    """
-    מזהה הודעת תיקון:
-    - תיקון 30.3 5 עובדים
-    - תיקון 30.3 07:00 15:00
-    - תיקון 30.3 6 עד 14 5 עובדים
-    מחזיר (תאריך, start/None, end/None, workers/None)
-    """
     text = text.strip()
     if not re.search(r"תיקון|תקן|עדכון|עדכן", text):
         return None
@@ -79,7 +92,6 @@ def parse_correction(text):
 
     start, end, workers = None, None, None
 
-    # שעות
     he = re.search(r"(?:מ[־\-]?)?(\d{1,2}(?::\d{2})?)\s+עד\s+(\d{1,2}(?::\d{2})?)", text)
     if he:
         start = normalize_hour(he.group(1))
@@ -90,7 +102,6 @@ def parse_correction(text):
         start = time_pat.group(1)
         end = time_pat.group(2)
 
-    # עובדים
     w = re.search(r"(\d+)\s*עובדים?", text)
     if w:
         workers = int(w.group(1))
@@ -100,20 +111,17 @@ def parse_correction(text):
 def parse_message(text):
     text = text.strip()
 
-    # פורמט עברי: מ-X עד Y Z עובדים (עם או בלי "מ")
     he_pattern = r"(?:מ[־\-]?)?(\d{1,2}(?::\d{2})?)\s+עד\s+(\d{1,2}(?::\d{2})?)\s+(\d+)"
     match = re.search(he_pattern, text)
     if match:
         return normalize_hour(match.group(1)), normalize_hour(match.group(2)), int(match.group(3))
 
-    # פורמט רגיל עם נקודותיים: 06:00 14:00 4
     pattern = r"(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})\s+(\d+)"
     match = re.search(pattern, text)
     if match:
         return match.group(1), match.group(2), int(match.group(3))
 
-    # פורמט מספרים בלבד: 6 14 4
-    simple = r"^(\d{1,2})\s+(\d{1,2})\s+(\d+)$"
+    simple = r"^[^\d]*(\d{1,2})\s+(\d{1,2})\s+(\d+)$"
     match = re.search(simple, text)
     if match:
         return normalize_hour(match.group(1)), normalize_hour(match.group(2)), int(match.group(3))
@@ -130,43 +138,38 @@ def calc_hours(start, end):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    team = detect_team(text)
 
     # בדוק אם זה תיקון
     correction = parse_correction(text)
     if correction:
         date_str, start, end, workers = correction
-        sheet = connect_sheet()
+        sheet = connect_sheet(team)
         rows = sheet.get_all_values()
 
-        # חפש שורה עם אותו תאריך (עמודה A)
         row_index = None
         for i, row in enumerate(rows):
             if row and row[0] == date_str:
-                row_index = i + 1  # gspread מתחיל מ-1
+                row_index = i + 1
                 break
 
         if not row_index:
-            await update.message.reply_text(f"❌ לא מצאתי שורה עם תאריך {date_str}")
+            await update.message.reply_text(f"❌ לא מצאתי שורה עם תאריך {date_str} בגיליון {team}")
             return
 
-        # מחיקת שורה
         if start == "DELETE":
             sheet.delete_rows(row_index)
-            await update.message.reply_text(f"🗑️ השורה של {date_str} נמחקה — לא נרשמה עבודה היום.")
+            await update.message.reply_text(f"🗑️ השורה של {date_str} נמחקה מגיליון {team}")
             return
 
-        # קרא את הערכים הקיימים
         existing = rows[row_index - 1]
         cur_start   = existing[2] if len(existing) > 2 else "00:00"
         cur_end     = existing[3] if len(existing) > 3 else "00:00"
         cur_workers = int(existing[4]) if len(existing) > 4 and existing[4] else 0
 
-        if start:
-            cur_start = start
-        if end:
-            cur_end = end
-        if workers:
-            cur_workers = workers
+        if start: cur_start = start
+        if end: cur_end = end
+        if workers: cur_workers = workers
 
         hours = calc_hours(cur_start, cur_end)
         total = hours * cur_workers
@@ -174,12 +177,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sheet.update(f"C{row_index}:G{row_index}", [[cur_start, cur_end, cur_workers, hours, total]])
 
         await update.message.reply_text(
-            f"✏️ תוקן בהצלחה!\n"
-            f"📅 תאריך: {date_str}\n"
-            f"🕐 שעות: {cur_start} עד {cur_end}\n"
-            f"👷 עובדים: {cur_workers}\n"
-            f"⏱ שעות ביום: {hours:.1f}\n"
-            f"📊 סה\"כ שעות: {total:.1f}"
+            f"✏️ תוקן בהצלחה! ({team})\n"
+            f"📅 {date_str}\n"
+            f"🕐 {cur_start} עד {cur_end}\n"
+            f"👷 {cur_workers} עובדים\n"
+            f"📊 סה\"כ: {total:.1f} שעות"
         )
         return
 
@@ -187,7 +189,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parsed = parse_message(text)
     if not parsed:
         await update.message.reply_text(
-            "❌ לא הבנתי. שלח בפורמט:\n06:00 14:00 4\n(שעת התחלה, שעת סיום, כמות עובדים)\n\nלתיקון: תיקון 30.3 5 עובדים"
+            "❌ לא הבנתי. דוגמאות:\n"
+            "שפפים 6 עד 14 4\n"
+            "מגרשי 06:00 14:00 3\n"
+            "תיקון שפפים 30.3 5 עובדים"
         )
         return
 
@@ -199,22 +204,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     date_str = now.strftime("%d/%m/%Y")
     day_str = DAYS_HE[now.weekday()]
 
-    sheet = connect_sheet()
+    sheet = connect_sheet(team)
     sheet.append_row([date_str, day_str, start, end, workers, hours, total, ""])
 
     await update.message.reply_text(
-        f"✅ נרשם בהצלחה!\n"
-        f"📅 תאריך: {date_str} ({day_str})\n"
-        f"🕐 שעות: {start} עד {end}\n"
-        f"👷 עובדים: {workers}\n"
-        f"⏱ שעות ביום: {hours:.1f}\n"
-        f"📊 סה\"כ שעות: {total:.1f}"
+        f"✅ נרשם! ({team})\n"
+        f"📅 {date_str} ({day_str})\n"
+        f"🕐 {start} עד {end}\n"
+        f"👷 {workers} עובדים\n"
+        f"📊 סה\"כ: {total:.1f} שעות"
     )
 
 async def daily_auto_entry(bot: Bot):
     now = datetime.now(ZoneInfo("Asia/Jerusalem"))
-    # רק ראשון עד חמישי (0=שני, 6=ראשון)
-    if now.weekday() in [4, 5]:  # שישי=4, שבת=5
+    if now.weekday() in [4, 5]:  # שישי, שבת
         return
 
     date_str = now.strftime("%d/%m/%Y")
@@ -222,18 +225,21 @@ async def daily_auto_entry(bot: Bot):
     hours = calc_hours(DEFAULT_START, DEFAULT_END)
     total = hours * DEFAULT_WORKERS
 
-    sheet = connect_sheet()
-    sheet.append_row([date_str, day_str, DEFAULT_START, DEFAULT_END, DEFAULT_WORKERS, hours, total, ""])
+    # רשום לשני הגיליונות
+    for team in ["שפפים", "מגרשי ספורט"]:
+        sheet = connect_sheet(team)
+        sheet.append_row([date_str, day_str, DEFAULT_START, DEFAULT_END, DEFAULT_WORKERS, hours, total, ""])
 
     await bot.send_message(
         chat_id=CHAT_ID,
         text=(
-            f"🤖 נרשם אוטומטי!\n"
+            f"🤖 נרשם אוטומטי לשני הצוותים!\n"
             f"📅 {date_str} ({day_str})\n"
             f"🕐 {DEFAULT_START} עד {DEFAULT_END}\n"
             f"👷 {DEFAULT_WORKERS} עובדים\n"
             f"📊 סה\"כ: {total:.0f} שעות\n\n"
-            f"אם יש שינוי — שלח תיקון 📝"
+            f"אם יש שינוי — שלח תיקון 📝\n"
+            f"(שפפים / מגרשי)"
         )
     )
 
@@ -245,7 +251,7 @@ def main():
     scheduler.add_job(daily_auto_entry, "cron", hour=9, minute=0, args=[app.bot])
     scheduler.start()
 
-    print("✅ הבוט פועל! שלח הודעה בטלגרם.")
+    print("✅ הבוט פועל!")
     app.run_polling()
 
 if __name__ == "__main__":
