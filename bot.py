@@ -4,14 +4,20 @@ import os
 import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from telegram import Update
+from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import gspread
 from google.oauth2.service_account import Credentials
 
 # ===== הגדרות =====
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8632792737:AAG3uiTT9CQRk9nq5cutsVGk5k3qceB_am4")
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1Yq3U4miWIGG763O_jY2oen2GFlhYe_U_1S62JurER3Q")
+CHAT_ID = 338759206
+
+DEFAULT_START = "06:00"
+DEFAULT_END = "14:00"
+DEFAULT_WORKERS = 4
 
 DAYS_HE = {
     0: "שני", 1: "שלישי", 2: "רביעי",
@@ -191,9 +197,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 סה\"כ שעות: {total:.1f}"
     )
 
+async def daily_auto_entry(bot: Bot):
+    now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+    # רק ראשון עד חמישי (0=שני, 6=ראשון)
+    if now.weekday() in [4, 5]:  # שישי=4, שבת=5
+        return
+
+    date_str = now.strftime("%d/%m/%Y")
+    day_str = DAYS_HE[now.weekday()]
+    hours = calc_hours(DEFAULT_START, DEFAULT_END)
+    total = hours * DEFAULT_WORKERS
+
+    sheet = connect_sheet()
+    sheet.append_row([date_str, day_str, DEFAULT_START, DEFAULT_END, DEFAULT_WORKERS, hours, total, ""])
+
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=(
+            f"🤖 נרשם אוטומטי!\n"
+            f"📅 {date_str} ({day_str})\n"
+            f"🕐 {DEFAULT_START} עד {DEFAULT_END}\n"
+            f"👷 {DEFAULT_WORKERS} עובדים\n"
+            f"📊 סה\"כ: {total:.0f} שעות\n\n"
+            f"אם יש שינוי — שלח תיקון 📝"
+        )
+    )
+
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    scheduler = AsyncIOScheduler(timezone=ZoneInfo("Asia/Jerusalem"))
+    scheduler.add_job(daily_auto_entry, "cron", hour=9, minute=0, args=[app.bot])
+    scheduler.start()
+
     print("✅ הבוט פועל! שלח הודעה בטלגרם.")
     app.run_polling()
 
