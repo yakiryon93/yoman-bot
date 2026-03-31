@@ -225,7 +225,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         day_str = DAYS_HE[now.weekday()]
 
     sheet = connect_sheet(team)
-    sheet.append_row([date_str, day_str, start, end, workers, hours, total, ""])
+    rows = sheet.get_all_values()
+    row_index = None
+    for i, row in enumerate(rows):
+        if row and row[0] == date_str:
+            row_index = i + 1
+            break
+
+    if row_index:
+        sheet.update(f"C{row_index}:G{row_index}", [[start, end, workers, hours, total]])
+    else:
+        sheet.append_row([date_str, day_str, start, end, workers, hours, total, ""])
 
     await update.message.reply_text(
         f"✅ נרשם! ({team})\n"
