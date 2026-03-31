@@ -111,9 +111,10 @@ def parse_correction(text):
 
     return date_str, start, end, workers
 
-def parse_message(text):
+def parse_message(text, team=None):
     text = text.strip()
 
+    # פורמט מלא עם שעות: "שפפים 07 13 4" או "06:00 עד 14:00 3"
     he_pattern = r"(?:מ[־\-]?)?(\d{1,2}(?::\d{2})?)\s+עד\s+(\d{1,2}(?::\d{2})?)\s+(\d+)"
     match = re.search(he_pattern, text)
     if match:
@@ -128,6 +129,14 @@ def parse_message(text):
     match = re.search(simple, text)
     if match:
         return normalize_hour(match.group(1)), normalize_hour(match.group(2)), int(match.group(3))
+
+    # פורמט קצר: "שפפים 5" או "מגרשי 3" — שעות לפי ברירת מחדל של הצוות
+    short = re.search(r"^[^\d]*(\d+)\s*$", text)
+    if short and team and team in TEAM_DEFAULTS:
+        workers = int(short.group(1))
+        start = TEAM_DEFAULTS[team]["start"]
+        end = TEAM_DEFAULTS[team]["end"]
+        return start, end, workers
 
     return None
 
@@ -189,12 +198,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # הודעה רגילה
-    parsed = parse_message(text)
+    parsed = parse_message(text, team)
     if not parsed:
         await update.message.reply_text(
             "❌ לא הבנתי. דוגמאות:\n"
-            "שפפים 6 עד 14 4\n"
-            "מגרשי 06:00 14:00 3\n"
+            "שפפים 5\n"
+            "מגרשי 3\n"
+            "שפפים 5 30.3\n"
             "תיקון שפפים 30.3 5 עובדים"
         )
         return
@@ -203,9 +213,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hours = calc_hours(start, end)
     total = hours * workers
 
+    # תאריך — אם צוין בהודעה, אחרת היום
+    specific_date = parse_date(text)
     now = datetime.now(ZoneInfo("Asia/Jerusalem"))
-    date_str = now.strftime("%d/%m/%Y")
-    day_str = DAYS_HE[now.weekday()]
+    if specific_date:
+        date_str = specific_date
+        day_num = datetime.strptime(specific_date, "%d/%m/%Y").weekday()
+        day_str = DAYS_HE[day_num]
+    else:
+        date_str = now.strftime("%d/%m/%Y")
+        day_str = DAYS_HE[now.weekday()]
 
     sheet = connect_sheet(team)
     sheet.append_row([date_str, day_str, start, end, workers, hours, total, ""])
