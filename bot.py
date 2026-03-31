@@ -197,6 +197,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # הערה
+    if re.match(r"^הערה", text):
+        note = re.sub(r"^הערה\s*", "", text).strip()
+        specific_date = parse_date(text)
+        now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+        date_str = specific_date if specific_date else now.strftime("%d/%m/%Y")
+
+        sheet = connect_sheet(team)
+        rows = sheet.get_all_values()
+        row_index = None
+        for i, row in enumerate(rows):
+            if row and row[0] == date_str:
+                row_index = i + 1
+                break
+
+        if not row_index:
+            await update.message.reply_text(f"❌ לא מצאתי שורה עם תאריך {date_str} בגיליון {team}")
+            return
+
+        sheet.update(f"H{row_index}", [[note]])
+        await update.message.reply_text(
+            f"📝 הערה נשמרה! ({team})\n"
+            f"📅 {date_str}\n"
+            f"💬 {note}"
+        )
+        return
+
     # הודעה רגילה
     parsed = parse_message(text, team)
     if not parsed:
