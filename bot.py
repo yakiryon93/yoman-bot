@@ -15,9 +15,12 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8632792737:AAG3uiTT9CQRk9nq5c
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1Yq3U4miWIGG763O_jY2oen2GFlhYe_U_1S62JurER3Q")
 CHAT_ID = 338759206
 
-DEFAULT_START = "06:00"
-DEFAULT_END = "14:00"
 DEFAULT_WORKERS = 4
+
+TEAM_DEFAULTS = {
+    "מגרשי ספורט": {"start": "06:00", "end": "14:00"},
+    "שפפים":        {"start": "07:00", "end": "13:00"},
+}
 
 TEAMS = {
     "שפפים":  "שפפים",
@@ -222,23 +225,24 @@ async def daily_auto_entry(bot: Bot):
 
     date_str = now.strftime("%d/%m/%Y")
     day_str = DAYS_HE[now.weekday()]
-    hours = calc_hours(DEFAULT_START, DEFAULT_END)
-    total = hours * DEFAULT_WORKERS
 
-    # רשום לשני הגיליונות
-    for team in ["שפפים", "מגרשי ספורט"]:
+    lines = []
+    for team, defaults in TEAM_DEFAULTS.items():
+        start = defaults["start"]
+        end = defaults["end"]
+        hours = calc_hours(start, end)
+        total = hours * DEFAULT_WORKERS
         sheet = connect_sheet(team)
-        sheet.append_row([date_str, day_str, DEFAULT_START, DEFAULT_END, DEFAULT_WORKERS, hours, total, ""])
+        sheet.append_row([date_str, day_str, start, end, DEFAULT_WORKERS, hours, total, ""])
+        lines.append(f"• {team}: {start}–{end} | {DEFAULT_WORKERS} עובדים | {total:.0f} שעות")
 
     await bot.send_message(
         chat_id=CHAT_ID,
         text=(
             f"🤖 נרשם אוטומטי לשני הצוותים!\n"
-            f"📅 {date_str} ({day_str})\n"
-            f"🕐 {DEFAULT_START} עד {DEFAULT_END}\n"
-            f"👷 {DEFAULT_WORKERS} עובדים\n"
-            f"📊 סה\"כ: {total:.0f} שעות\n\n"
-            f"אם יש שינוי — שלח תיקון 📝\n"
+            f"📅 {date_str} ({day_str})\n\n"
+            + "\n".join(lines) +
+            f"\n\nאם יש שינוי — שלח תיקון 📝\n"
             f"(שפפים / מגרשי)"
         )
     )
