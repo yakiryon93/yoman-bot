@@ -2,6 +2,7 @@ import logging
 import re
 import os
 import json
+import traceback
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram import Update, Bot
@@ -301,16 +302,29 @@ async def daily_auto_entry(bot: Bot):
         )
     )
 
+async def error_handler(update, context):
+    err = context.error
+    logging.error(f"Exception while handling update: {err}")
+    logging.error(traceback.format_exc())
+
+
+async def heartbeat():
+    now = datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M:%S")
+    logging.info(f"💓 Heartbeat OK — {now}")
+
+
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_error_handler(error_handler)
 
     scheduler = AsyncIOScheduler(timezone=ZoneInfo("Asia/Jerusalem"))
     scheduler.add_job(daily_auto_entry, "cron", hour=7, minute=30, args=[app.bot])
+    scheduler.add_job(heartbeat, "interval", minutes=30)
     scheduler.start()
 
     print("✅ הבוט פועל!")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
