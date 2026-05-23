@@ -35,6 +35,14 @@ DAYS_HE = {
     3: "חמישי", 4: "שישי", 5: "שבת", 6: "ראשון"
 }
 
+MONTHS_HE = {
+    "ינואר": 1, "פברואר": 2, "מרץ": 3, "מארס": 3, "אפריל": 4,
+    "מאי": 5, "יוני": 6, "יולי": 7, "אוגוסט": 8,
+    "ספטמבר": 9, "אוקטובר": 10, "נובמבר": 11, "דצמבר": 12,
+}
+
+MONTHS_HE_NAMES = {v: k for k, v in MONTHS_HE.items() if k != "מארס"}
+
 logging.basicConfig(level=logging.INFO)
 
 def get_client():
@@ -149,8 +157,89 @@ def calc_hours(start, end):
         t2 += timedelta(days=1)
     return (t2 - t1).seconds / 3600
 
+def parse_monthly_summary(text):
+    """מזהה בקשת סיכום חודשי. מחזיר (month, year) או None."""
+    if "סיכום" not in text or "חודש" not in text:
+        return None
+
+    now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+    month = None
+    year = now.year
+
+    for name, num in MONTHS_HE.items():
+        if name in text:
+            month = num
+            break
+
+    if month is None:
+        m = re.search(r"חודש\s*(\d{1,2})", text)
+        if m:
+            month = int(m.group(1))
+
+    if month is None:
+        return None
+
+    y = re.search(r"(20\d{2})", text)
+    if y:
+        year = int(y.group(1))
+
+    return month, year
+
+
+def monthly_summary_for_team(team, month, year):
+    """מחזיר (days_count, total_hours) עבור צוות בחודש מסוים."""
+    sheet = connect_sheet(team)
+    rows = sheet.get_all_values()
+    days = 0
+    total_hours = 0.0
+
+    for row in rows:
+        if not row or len(row) < 6:
+            continue
+        date_cell = row[0].strip()
+        if not date_cell or not re.match(r"\d{1,2}/\d{1,2}/\d{4}", date_cell):
+            continue
+        try:
+            d = datetime.strptime(date_cell, "%d/%m/%Y")
+        except ValueError:
+            continue
+        if d.month != month or d.year != year:
+            continue
+
+        try:
+            workers = int(row[4]) if row[4] else 0
+        except (ValueError, IndexError):
+            workers = 0
+        if workers == 0:
+            continue
+
+        try:
+            total = float(row[6]) if len(row) > 6 and row[6] else 0
+        except ValueError:
+            total = 0
+
+        days += 1
+        total_hours += total
+
+    return days, total_hours
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+
+    summary_req = parse_monthly_summary(text)
+    if summary_req:
+        month, year = summary_req
+        month_name = MONTHS_HE_NAMES.get(month, str(month))
+        lines = [f"📊 סיכום {month_name} {year}\n"]
+        for team in TEAM_DEFAULTS.keys():
+            days, hours = monthly_summary_for_team(team, month, year)
+            lines.append(f"🏢 *{team}*")
+            lines.append(f"   📅 {days} ימי עבודה")
+            lines.append(f"   ⏱️ {hours:.0f} שעות סה\"כ\n")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        return
+
     team = detect_team(text)
 
     # בדוק אם זה תיקון
