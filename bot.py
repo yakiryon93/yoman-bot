@@ -19,8 +19,8 @@ CHAT_ID = 338759206
 DEFAULT_WORKERS = 15
 
 TEAM_DEFAULTS = {
-    "מגרשי ספורט": {"start": "06:00", "end": "14:00"},
-    "שפפים":        {"start": "07:00", "end": "13:00"},
+    "מגרשי ספורט": {"start": "06:00", "end": "14:00", "workers": 4},
+    "שפפים":        {"start": "07:00", "end": "13:00", "workers": 15},
 }
 
 TEAMS = {
@@ -285,11 +285,12 @@ async def daily_auto_entry(bot: Bot):
     for team, defaults in TEAM_DEFAULTS.items():
         start = defaults["start"]
         end = defaults["end"]
+        workers = defaults.get("workers", DEFAULT_WORKERS)
         hours = calc_hours(start, end)
-        total = hours * DEFAULT_WORKERS
+        total = hours * workers
         sheet = connect_sheet(team)
-        sheet.append_row([date_str, day_str, start, end, DEFAULT_WORKERS, hours, total, ""])
-        lines.append(f"• {team}: {start}–{end} | {DEFAULT_WORKERS} עובדים | {total:.0f} שעות")
+        sheet.append_row([date_str, day_str, start, end, workers, hours, total, ""])
+        lines.append(f"• {team}: {start}–{end} | {workers} עובדים | {total:.0f} שעות")
 
     await bot.send_message(
         chat_id=CHAT_ID,
