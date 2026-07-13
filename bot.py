@@ -90,33 +90,53 @@ def parse_correction(text):
     if not re.search(r"תיקון|תקן|עדכון|עדכן", text):
         return None
 
+    now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+    today_str = now.strftime("%d/%m/%Y")
+
     # אין עובדים — מחק את השורה
     if re.search(r"אין עובדים|לא עבדו|לא עובדים|אין עבודה", text):
-        date_str = parse_date(text)
-        if not date_str:
-            now = datetime.now(ZoneInfo("Asia/Jerusalem"))
-            date_str = now.strftime("%d/%m/%Y")
+        date_str = parse_date(text) or today_str
         return date_str, "DELETE", None, None
 
-    date_str = parse_date(text)
-    if not date_str:
-        return None
+    date_str = parse_date(text) or today_str
+
+    # מסיר את חלק התאריך מהטקסט כדי שלא יתפרש כשעה
+    text_wo_date = re.sub(r"\d{1,2}[./]\d{1,2}(?:[./]\d{4})?", " ", text)
 
     start, end, workers = None, None, None
 
-    he = re.search(r"(?:מ[־\-]?)?(\d{1,2}(?::\d{2})?)\s+עד\s+(\d{1,2}(?::\d{2})?)", text)
+    # מספר עובדים
+    w = re.search(r"(\d+)\s*עובדים?", text_wo_date)
+    if w:
+        workers = int(w.group(1))
+        text_wo_date = text_wo_date[:w.start()] + " " + text_wo_date[w.end():]
+
+    # טווח שעות: "07 עד 13" / "07:00 עד 13:00"
+    he = re.search(r"(?:מ[־\-]?)?(\d{1,2}(?::\d{2})?)\s+עד\s+(\d{1,2}(?::\d{2})?)", text_wo_date)
     if he:
         start = normalize_hour(he.group(1))
         end = normalize_hour(he.group(2))
+    else:
+        # שני זמנים ברצף: "07:00 13:00"
+        time_pair = re.search(r"(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})", text_wo_date)
+        if time_pair:
+            start = time_pair.group(1)
+            end = time_pair.group(2)
+        else:
+            # התחלה בלבד: "התחלה 08:00" / "משעה 08" / "מ-08:00"
+            start_only = re.search(r"(?:התחלה|מהשעה|משעה|מ[־\-]?)\s*(\d{1,2}(?::\d{2})?)", text_wo_date)
+            if start_only:
+                start = normalize_hour(start_only.group(1))
+            # סיום בלבד: "סיום 15:00" / "עד השעה 15" / "סוף 15:00"
+            end_only = re.search(r"(?:סיום|סוף|עד\s*השעה|עד\s*ה[־\-]?)\s*(\d{1,2}(?::\d{2})?)", text_wo_date)
+            if end_only:
+                end = normalize_hour(end_only.group(1))
 
-    time_pat = re.search(r"(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})", text)
-    if time_pat and not start:
-        start = time_pat.group(1)
-        end = time_pat.group(2)
-
-    w = re.search(r"(\d+)\s*עובדים?", text)
-    if w:
-        workers = int(w.group(1))
+            # אם אין התחלה/סיום מפורש ויש רק מספר אחד עם :MM — התייחס אליו כזמן התחלה
+            if not start and not end:
+                lone_time = re.search(r"(\d{1,2}:\d{2})", text_wo_date)
+                if lone_time:
+                    start = lone_time.group(1)
 
     return date_str, start, end, workers
 
