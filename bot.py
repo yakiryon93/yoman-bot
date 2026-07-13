@@ -227,6 +227,16 @@ def monthly_summary_for_team(team, month, year):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
+    # הפעלה ידנית של העדכון היומי
+    if re.search(r"עדכן\s*(עכשיו|היום|ידני)|הפעל\s*עדכון", text):
+        try:
+            result = await _do_daily_auto_entry(context.bot, force=True)
+            if result is None:
+                await update.message.reply_text("📴 סוף שבוע — אין עדכון היום. (נלחצת בכל מקרה? שלח 'עדכן עכשיו')")
+        except Exception as e:
+            await update.message.reply_text(f"❌ עדכן ידני נכשל: {e}")
+        return
+
     summary_req = parse_monthly_summary(text)
     if summary_req:
         month, year = summary_req
@@ -362,10 +372,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 סה\"כ: {total:.1f} שעות"
     )
 
-async def daily_auto_entry(bot: Bot):
+import asyncio
+
+
+async def _append_with_retry(sheet, row, retries=4):
+    """מנסה לרשום ל-Google Sheets עם retries על 5xx / rate-limit."""
+    delay = 5
+    last_err = None
+    for attempt in range(retries):
+        try:
+            sheet.append_row(row)
+            return
+        except gspread.exceptions.APIError as e:
+            last_err = e
+            status = getattr(e, "response", None)
+            code = None
+            try:
+                code = e.response.status_code
+            except Exception:
+                pass
+            if code and code < 500 and code != 429:
+                raise
+            logging.warning(f"Google Sheets error (attempt {attempt+1}/{retries}): {e}. Retrying in {delay}s...")
+            await asyncio.sleep(delay)
+            delay *= 2
+    raise last_err
+
+
+async def _do_daily_auto_entry(bot: Bot, force=False):
     now = datetime.now(ZoneInfo("Asia/Jerusalem"))
-    if now.weekday() in [4, 5]:  # שישי, שבת
-        return
+    if not force and now.weekday() in [4, 5]:  # שישי, שבת
+        return None
 
     date_str = now.strftime("%d/%m/%Y")
     day_str = DAYS_HE[now.weekday()]
@@ -378,19 +415,32 @@ async def daily_auto_entry(bot: Bot):
         hours = calc_hours(start, end)
         total = hours * workers
         sheet = connect_sheet(team)
-        sheet.append_row([date_str, day_str, start, end, workers, hours, total, ""])
+        await _append_with_retry(sheet, [date_str, day_str, start, end, workers, hours, total, ""])
         lines.append(f"• {team}: {start}–{end} | {workers} עובדים | {total:.0f} שעות")
 
-    await bot.send_message(
-        chat_id=CHAT_ID,
-        text=(
-            f"🤖 נרשם אוטומטי לשני הצוותים!\n"
-            f"📅 {date_str} ({day_str})\n\n"
-            + "\n".join(lines) +
-            f"\n\nאם יש שינוי — שלח תיקון 📝\n"
-            f"(שפפים / מגרשי)"
-        )
+    msg = (
+        f"🤖 נרשם אוטומטי לשני הצוותים!\n"
+        f"📅 {date_str} ({day_str})\n\n"
+        + "\n".join(lines) +
+        f"\n\nאם יש שינוי — שלח תיקון 📝\n"
+        f"(שפפים / מגרשי)"
     )
+    await bot.send_message(chat_id=CHAT_ID, text=msg)
+    return msg
+
+
+async def daily_auto_entry(bot: Bot):
+    try:
+        await _do_daily_auto_entry(bot)
+    except Exception as e:
+        logging.error(f"daily_auto_entry failed: {e}")
+        try:
+            await bot.send_message(
+                chat_id=CHAT_ID,
+                text=f"⚠️ העדכון האוטומטי נכשל: {e}\nשלח 'עדכן עכשיו' כדי לנסות שוב."
+            )
+        except Exception:
+            pass
 
 async def error_handler(update, context):
     err = context.error
