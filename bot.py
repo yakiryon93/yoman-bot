@@ -16,18 +16,18 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8632792737:AAG3uiTT9CQRk9nq5c
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1Yq3U4miWIGG763O_jY2oen2GFlhYe_U_1S62JurER3Q")
 CHAT_ID = 338759206
 
-DEFAULT_WORKERS = 15
+DEFAULT_WORKERS = 8
 
 TEAM_DEFAULTS = {
-    "מגרשי ספורט": {"start": "06:00", "end": "14:00", "workers": 4},
-    "שפפים":        {"start": "07:00", "end": "13:00", "workers": 15},
+    "שפפים דינמיקה": {"start": "06:00", "end": "14:00", "workers": 8},
 }
 
 TEAMS = {
-    "שפפים":  "שפפים",
-    "מגרשי":  "מגרשי ספורט",
-    "מגרש":   "מגרשי ספורט",
-    "ספורט":  "מגרשי ספורט",
+    "דינמיקה":  "שפפים דינמיקה",
+    "שפפים":    "שפפים דינמיקה",
+    "מגרשי":    "שפפים דינמיקה",
+    "מגרש":     "שפפים דינמיקה",
+    "ספורט":    "שפפים דינמיקה",
 }
 
 DAYS_HE = {
@@ -55,7 +55,7 @@ def get_client():
         creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
     return gspread.authorize(creds)
 
-def connect_sheet(team_name="שפפים"):
+def connect_sheet(team_name="שפפים דינמיקה"):
     client = get_client()
     spreadsheet = client.open_by_key(SPREADSHEET_ID)
     try:
@@ -64,11 +64,11 @@ def connect_sheet(team_name="שפפים"):
         return spreadsheet.sheet1
 
 def detect_team(text):
-    """מזהה איזה צוות מוזכר בהודעה. ברירת מחדל: שפפים"""
+    """מזהה איזה צוות מוזכר בהודעה. יש רק צוות אחד: שפפים דינמיקה."""
     for keyword, name in TEAMS.items():
         if keyword in text:
             return name
-    return "שפפים"
+    return "שפפים דינמיקה"
 
 def normalize_hour(h):
     h = h.replace(":", "")
@@ -159,8 +159,8 @@ def parse_message(text, team=None):
     if match:
         return normalize_hour(match.group(1)), normalize_hour(match.group(2)), int(match.group(3))
 
-    # פורמט קצר: "שפפים 5" או "מגרשי 3" — שעות לפי ברירת מחדל של הצוות
-    short = re.search(r"^[^\d]*(\d+)\s*$", text)
+    # פורמט קצר: "שפפים 5" / "שפפים 5 עובדים" — שעות לפי ברירת מחדל של הצוות
+    short = re.search(r"^[^\d]*(\d+)(?:\s*עובדים?)?\s*$", text)
     if short and team and team in TEAM_DEFAULTS:
         workers = int(short.group(1))
         start = TEAM_DEFAULTS[team]["start"]
@@ -350,9 +350,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ לא הבנתי. דוגמאות:\n"
             "שפפים 5\n"
-            "מגרשי 3\n"
-            "שפפים 5 30.3\n"
-            "תיקון שפפים 30.3 5 עובדים"
+            "שפפים 5 30/07\n"
+            "תיקון שפפים 30/07 5 עובדים\n"
+            "תיקון שפפים 10 עובדים"
         )
         return
 
@@ -443,7 +443,7 @@ async def _do_daily_auto_entry(bot: Bot, force=False):
         f"📅 {date_str} ({day_str})\n\n"
         + "\n".join(lines) +
         f"\n\nאם יש שינוי — שלח תיקון 📝\n"
-        f"(שפפים / מגרשי)"
+        f"(שפפים דינמיקה)"
     )
     await bot.send_message(chat_id=CHAT_ID, text=msg)
     return msg
