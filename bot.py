@@ -16,10 +16,10 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8632792737:AAG3uiTT9CQRk9nq5c
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1Yq3U4miWIGG763O_jY2oen2GFlhYe_U_1S62JurER3Q")
 CHAT_ID = 338759206
 
-DEFAULT_WORKERS = 8
+DEFAULT_WORKERS = 6
 
 TEAM_DEFAULTS = {
-    "שפפים דינמיקה": {"start": "06:00", "end": "14:00", "workers": 8},
+    "שפפים דינמיקה": {"start": "06:00", "end": "14:00", "workers": 6},
 }
 
 TEAMS = {
