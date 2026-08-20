@@ -498,7 +498,7 @@ def main():
     app.add_error_handler(error_handler)
 
     scheduler = AsyncIOScheduler(timezone=ZoneInfo("Asia/Jerusalem"))
-    scheduler.add_job(daily_auto_entry, "cron", hour=7, minute=30, args=[app.bot])
+    scheduler.add_job(daily_auto_entry, "cron", hour=7, minute=0, args=[app.bot])
     scheduler.add_job(heartbeat, "interval", minutes=30)
     scheduler.start()
 
