@@ -395,27 +395,47 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 import asyncio
 
 
-async def _append_with_retry(sheet, row, retries=4):
-    """מנסה לרשום ל-Google Sheets עם retries על 5xx / rate-limit."""
+def _is_retryable_error(e):
+    """בודק אם השגיאה זמנית וכדאי לנסות שוב."""
+    if isinstance(e, gspread.exceptions.APIError):
+        code = None
+        try:
+            code = e.response.status_code
+        except Exception:
+            pass
+        if code is None:
+            try:
+                code = e.args[0].get("code")
+            except Exception:
+                pass
+        if code is None:
+            code_str = str(e)
+            for c in ("500", "502", "503", "504", "429", "UNAVAILABLE"):
+                if c in code_str:
+                    return True
+            return False
+        return code >= 500 or code == 429
+    if isinstance(e, (ConnectionError, TimeoutError)):
+        return True
+    return False
+
+
+async def _write_team_with_retry(team, row, retries=5):
+    """פותח את הגיליון של הצוות ומוסיף שורה — עם retry על שגיאות זמניות."""
     delay = 5
     last_err = None
     for attempt in range(retries):
         try:
+            sheet = connect_sheet(team)
             sheet.append_row(row)
             return
-        except gspread.exceptions.APIError as e:
+        except Exception as e:
             last_err = e
-            status = getattr(e, "response", None)
-            code = None
-            try:
-                code = e.response.status_code
-            except Exception:
-                pass
-            if code and code < 500 and code != 429:
+            if not _is_retryable_error(e):
                 raise
-            logging.warning(f"Google Sheets error (attempt {attempt+1}/{retries}): {e}. Retrying in {delay}s...")
+            logging.warning(f"Google Sheets error for {team} (attempt {attempt+1}/{retries}): {e}. Retrying in {delay}s...")
             await asyncio.sleep(delay)
-            delay *= 2
+            delay = min(delay * 2, 60)
     raise last_err
 
 
@@ -434,12 +454,11 @@ async def _do_daily_auto_entry(bot: Bot, force=False):
         workers = defaults.get("workers", DEFAULT_WORKERS)
         hours = calc_hours(start, end)
         total = hours * workers
-        sheet = connect_sheet(team)
-        await _append_with_retry(sheet, [date_str, day_str, start, end, workers, hours, total, ""])
+        await _write_team_with_retry(team, [date_str, day_str, start, end, workers, hours, total, ""])
         lines.append(f"• {team}: {start}–{end} | {workers} עובדים | {total:.0f} שעות")
 
     msg = (
-        f"🤖 נרשם אוטומטי לשני הצוותים!\n"
+        f"🤖 נרשם אוטומטי!\n"
         f"📅 {date_str} ({day_str})\n\n"
         + "\n".join(lines) +
         f"\n\nאם יש שינוי — שלח תיקון 📝\n"
