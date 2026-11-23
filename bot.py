@@ -85,58 +85,91 @@ def parse_date(text):
         return f"{day:02d}/{month:02d}/{year}"
     return None
 
+NUM_WORDS = {
+    "אפס": 0, "אחד": 1, "אחת": 1, "שניים": 2, "שתיים": 2, 
+    "שלושה": 3, "שלוש": 3, "ארבעה": 4, "ארבע": 4, "חמישה": 5, "חמש": 5,
+    "שישה": 6, "שש": 6, "שבעה": 7, "שבע": 7, "שמונה": 8, "תשעה": 9, "תשע": 9,
+    "עשרה": 10, "עשר": 10,
+}
+
+CORRECTION_WORDS = r"תיקון|תקן|תתקן|לתקן|עדכון|עדכן|תעדכן|לעדכן|שנה|תשנה|לשנות|שינוי"
+
+
+def words_to_digits(text):
+    """ממיר מספרים במילים לספרות: "שלושה עובדים" -> "3 עובדים"."""
+    text = re.sub(r"(?<![א-ת])(?:שני|שתי)(?=\s*(?:עובדים|אנשים|פועלים))", "2", text)
+    for word in sorted(NUM_WORDS, key=len, reverse=True):
+        text = re.sub(rf"(?<![א-ת]){word}(?![א-ת])", str(NUM_WORDS[word]), text)
+    return text
+
+
+def relative_date(text, now):
+    """מזהה "אתמול" / "שלשום" / "היום"."""
+    if "שלשום" in text:
+        return (now - timedelta(days=2)).strftime("%d/%m/%Y")
+    if "אתמול" in text:
+        return (now - timedelta(days=1)).strftime("%d/%m/%Y")
+    return None
+
+
 def parse_correction(text):
+    """מחזיר (date_str, start, end, workers) או None אם זו לא הודעת תיקון.
+    כל שדה שלא הוזכר הוא None. workers יכול להיות 0."""
     text = text.strip()
-    if not re.search(r"תיקון|תקן|עדכון|עדכן", text):
+    if not re.search(CORRECTION_WORDS, text):
         return None
 
     now = datetime.now(ZoneInfo("Asia/Jerusalem"))
-    today_str = now.strftime("%d/%m/%Y")
+    date_str = parse_date(text) or relative_date(text, now) or now.strftime("%d/%m/%Y")
 
     # אין עובדים — מחק את השורה
-    if re.search(r"אין עובדים|לא עבדו|לא עובדים|אין עבודה", text):
-        date_str = parse_date(text) or today_str
+    if re.search(r"אין עובדים|לא עבדו|לא עובדים|אין עבודה|מחק", text):
         return date_str, "DELETE", None, None
 
-    date_str = parse_date(text) or today_str
+    # מסיר תאריך, ממיר מספרים במילים, ומנקה את הטקסט שכבר זוהה
+    rest = re.sub(r"\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?", " ", text)
+    rest = words_to_digits(rest)
 
-    # מסיר את חלק התאריך מהטקסט כדי שלא יתפרש כשעה
-    text_wo_date = re.sub(r"\d{1,2}[./]\d{1,2}(?:[./]\d{4})?", " ", text)
+    def consume(m):
+        nonlocal rest
+        rest = rest[:m.start()] + " " + rest[m.end():]
 
     start, end, workers = None, None, None
+    T = r"(\d{1,2}(?::\d{2})?)"
 
-    # מספר עובדים
-    w = re.search(r"(\d+)\s*עובדים?", text_wo_date)
+    # מספר עובדים: "5 עובדים" / "עובדים 5" / "עובדים: 5" / "5 איש" / "5 אנשים"
+    w = (re.search(r"(\d+)\s*(?:עובדים|עובד|אנשים|איש|פועלים)", rest)
+         or re.search(r"(?:עובדים|עובד|אנשים|פועלים)\s*[:=\-]?\s*(\d+)", rest))
     if w:
         workers = int(w.group(1))
-        text_wo_date = text_wo_date[:w.start()] + " " + text_wo_date[w.end():]
+        consume(w)
 
-    # טווח שעות: "07 עד 13" / "07:00 עד 13:00"
-    he = re.search(r"(?:מ[־\-]?)?(\d{1,2}(?::\d{2})?)\s+עד\s+(\d{1,2}(?::\d{2})?)", text_wo_date)
+    # טווח שעות: "07 עד 13" / "מ-7 עד 13" / "07:00-13:00" / "07:00 13:00"
+    he = (re.search(rf"(?:מ[־\-]?|משעה\s*|מהשעה\s*)?{T}\s*(?:עד|[-–])\s*(?:השעה\s*)?{T}", rest)
+          or re.search(r"(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})", rest))
     if he:
-        start = normalize_hour(he.group(1))
-        end = normalize_hour(he.group(2))
+        start, end = normalize_hour(he.group(1)), normalize_hour(he.group(2))
+        consume(he)
     else:
-        # שני זמנים ברצף: "07:00 13:00"
-        time_pair = re.search(r"(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})", text_wo_date)
-        if time_pair:
-            start = time_pair.group(1)
-            end = time_pair.group(2)
-        else:
-            # התחלה בלבד: "התחלה 08:00" / "משעה 08" / "מ-08:00"
-            start_only = re.search(r"(?:התחלה|מהשעה|משעה|מ[־\-]?)\s*(\d{1,2}(?::\d{2})?)", text_wo_date)
-            if start_only:
-                start = normalize_hour(start_only.group(1))
-            # סיום בלבד: "סיום 15:00" / "עד השעה 15" / "סוף 15:00"
-            end_only = re.search(r"(?:סיום|סוף|עד\s*השעה|עד\s*ה[־\-]?)\s*(\d{1,2}(?::\d{2})?)", text_wo_date)
-            if end_only:
-                end = normalize_hour(end_only.group(1))
+        s_only = re.search(rf"(?:התחלה|התחילו|מהשעה|משעה|(?<![א-ת])מ[־\-]?)\s*{T}", rest)
+        if s_only:
+            start = normalize_hour(s_only.group(1))
+            consume(s_only)
+        e_only = re.search(rf"(?:סיום|סיימו|סוף|(?<![א-ת])עד)\s*(?:השעה\s*|ה[־\-]?)?{T}", rest)
+        if e_only:
+            end = normalize_hour(e_only.group(1))
+            consume(e_only)
+        if not start and not end:
+            lone = re.search(r"(\d{1,2}:\d{2})", rest)
+            if lone:
+                start = lone.group(1)
+                consume(lone)
 
-            # אם אין התחלה/סיום מפורש ויש רק מספר אחד עם :MM — התייחס אליו כזמן התחלה
-            if not start and not end:
-                lone_time = re.search(r"(\d{1,2}:\d{2})", text_wo_date)
-                if lone_time:
-                    start = lone_time.group(1)
+    # מספר שנשאר לבד ("תיקון 0", "תיקון שפפים 4") = מספר עובדים
+    if workers is None:
+        bare = re.search(r"(?<![\d:])(\d{1,2})(?![\d:])", rest)
+        if bare:
+            workers = int(bare.group(1))
 
     return date_str, start, end, workers
 
@@ -285,28 +318,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 row_index = i + 1
                 break
 
-        if not row_index:
-            await update.message.reply_text(f"❌ לא מצאתי שורה עם תאריך {date_str} בגיליון {team}")
-            return
-
         if start == "DELETE":
+            if not row_index:
+                await update.message.reply_text(f"❌ לא מצאתי שורה עם תאריך {date_str} בגיליון {team}")
+                return
             sheet.delete_rows(row_index)
             await update.message.reply_text(f"🗑️ השורה של {date_str} נמחקה מגיליון {team}")
             return
 
-        existing = rows[row_index - 1]
-        cur_start   = existing[2] if len(existing) > 2 else "00:00"
-        cur_end     = existing[3] if len(existing) > 3 else "00:00"
-        cur_workers = int(existing[4]) if len(existing) > 4 and existing[4] else 0
+        if start is None and end is None and workers is None:
+            await update.message.reply_text(
+                "❓ לא הבנתי מה לתקן. דוגמאות:\n"
+                "תיקון 4\n"
+                "תיקון 0 עובדים\n"
+                "תיקון אתמול 3 עובדים\n"
+                "תיקון 23/11 מ-7 עד 13\n"
+                "תיקון סיום 15:00"
+            )
+            return
 
-        if start: cur_start = start
-        if end: cur_end = end
-        if workers: cur_workers = workers
+        defaults = TEAM_DEFAULTS.get(team, {})
+        if row_index:
+            existing = rows[row_index - 1]
+        else:
+            existing = []
+        cur_start   = existing[2] if len(existing) > 2 and existing[2] else defaults.get("start", "06:00")
+        cur_end     = existing[3] if len(existing) > 3 and existing[3] else defaults.get("end", "14:00")
+        try:
+            cur_workers = int(existing[4]) if len(existing) > 4 and existing[4] else defaults.get("workers", DEFAULT_WORKERS)
+        except ValueError:
+            cur_workers = defaults.get("workers", DEFAULT_WORKERS)
+
+        if start is not None: cur_start = start
+        if end is not None: cur_end = end
+        if workers is not None: cur_workers = workers
 
         hours = calc_hours(cur_start, cur_end)
         total = hours * cur_workers
 
-        sheet.update(f"C{row_index}:G{row_index}", [[cur_start, cur_end, cur_workers, hours, total]])
+        if row_index:
+            sheet.update(f"C{row_index}:G{row_index}", [[cur_start, cur_end, cur_workers, hours, total]])
+        else:
+            day_str = DAYS_HE[datetime.strptime(date_str, "%d/%m/%Y").weekday()]
+            sheet.append_row([date_str, day_str, cur_start, cur_end, cur_workers, hours, total, ""])
 
         await update.message.reply_text(
             f"✏️ תוקן בהצלחה! ({team})\n"
